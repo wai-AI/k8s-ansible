@@ -1,0 +1,126 @@
+---
+pki_dir: "{{ playbook_dir }}/../.secrets/pki"
+
+service_cidr: "10.96.0.0/24"
+kubernetes_service_ip: "10.96.0.1"
+
+k8s_certificates:
+  - name: admin
+    common_name: admin
+    organization: system:masters
+    extended_key_usage:
+      - clientAuth
+
+  - name: kube-apiserver
+    common_name: kube-apiserver
+    extended_key_usage:
+      - serverAuth
+    subject_alt_name:
+      - "IP:127.0.0.1"
+      - "IP:{{ kubernetes_service_ip }}"
+      - "IP:{{ hostvars['controller-0']['private_ip'] }}"
+      - "IP:{{ hostvars['controller-0']['ansible_host'] }}"
+      - "DNS:localhost"
+      - "DNS:controller-0"
+      - "DNS:kubernetes"
+      - "DNS:kubernetes.default"
+      - "DNS:kubernetes.default.svc"
+      - "DNS:kubernetes.default.svc.cluster.local"
+
+  - name: etcd-server
+    common_name: etcd-server
+    extended_key_usage: [serverAuth, clientAuth]
+    subject_alt_name:
+      - "IP:127.0.0.1"
+      - "IP:{{ hostvars['controller-0']['private_ip'] }}"
+      - "DNS:controller-0"
+
+  - name: kube-apiserver-etcd-client
+    common_name: kube-apiserver-etcd-client
+    extended_key_usage: [clientAuth]
+
+  - name: kube-apiserver-kubelet-client
+    common_name: kube-apiserver-kubelet-client
+    extended_key_usage: [clientAuth]
+
+  - name: kube-controller-manager
+    common_name: "system:kube-controller-manager"
+    extended_key_usage: [clientAuth]
+
+  - name: kube-scheduler
+    common_name: "system:kube-scheduler"
+    extended_key_usage: [clientAuth]
+
+  - name: kube-proxy
+    common_name: "system:kube-proxy"
+    organization: "system:node-proxier"
+    extended_key_usage: [clientAuth]
+
+  - name: worker-0
+    common_name: "system:node:worker-0"
+    organization: "system:nodes"
+    extended_key_usage: [clientAuth, serverAuth]
+    subject_alt_name:
+      - "IP:{{ hostvars['worker-0']['private_ip'] }}"
+      - "DNS:worker-0"
+
+  - name: worker-1
+    common_name: "system:node:worker-1"
+    organization: "system:nodes"
+    extended_key_usage: [clientAuth, serverAuth]
+    subject_alt_name:
+      - "IP:{{ hostvars['worker-1']['private_ip'] }}"
+      - "DNS:worker-1"
+
+kubeconfig_dir: "{{ playbook_dir }}/../.secrets/kubeconfigs"
+
+api_server_internal: "https://{{ hostvars['controller-0']['private_ip'] }}:6443"
+api_server_external: "https://{{ hostvars['controller-0']['ansible_host'] }}:6443"
+
+kubeconfig_clients:
+  - name: admin
+    certificate: admin
+    server: "{{ api_server_external }}"
+
+  - name: admin-internal
+    certificate: admin
+    server: "{{ api_server_internal }}"
+
+  - name: kube-controller-manager
+    certificate: kube-controller-manager
+    server: "https://127.0.0.1:6443"
+
+  - name: kube-scheduler
+    certificate: kube-scheduler
+    server: "https://127.0.0.1:6443"
+
+  - name: kube-proxy
+    certificate: kube-proxy
+    server: "{{ api_server_internal }}"
+
+  - name: worker-0
+    certificate: worker-0
+    server: "{{ api_server_internal }}"
+
+  - name: worker-1
+    certificate: worker-1
+    server: "{{ api_server_internal }}"
+
+encryption_key_file: "{{ playbook_dir }}/../.secrets/encryption.key"
+encryption_config_file: "{{ playbook_dir }}/../.secrets/encryption-config.yaml"
+
+etcd_version: "3.6.16"
+etcd_sha256: "c8c0d96d8292ef085deabbf735e9561d3d396768e4d606df005aa25964f21911"
+
+kubernetes_version: "1.36.5"
+
+pod_cidr: "10.244.0.0/16"
+
+containerd_package_version: "2.3.6-1~ubuntu.24.04~noble"
+
+cni_version: "1.9.1"
+cluster_dns: "10.96.0.10"
+
+flannel_version: "0.28.6"
+
+coredns_version: "1.15.0"

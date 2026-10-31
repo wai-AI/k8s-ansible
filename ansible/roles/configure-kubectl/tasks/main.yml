@@ -1,0 +1,16 @@
+---
+- name: Verify remote API access
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - "--kubeconfig={{ kubeconfig_dir }}/admin.kubeconfig"
+      - get
+      - --raw=/readyz
+  changed_when: false
+
+- name: Create project kubectl environment file
+  ansible.builtin.copy:
+    dest: "{{ playbook_dir }}/../.secrets/kubectl-env.sh"
+    mode: "0600"
+    content: |
+      export KUBECONFIG="{{ kubeconfig_dir }}/admin.kubeconfig"

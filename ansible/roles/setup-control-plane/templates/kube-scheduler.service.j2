@@ -1,0 +1,16 @@
+[Unit]
+Description=Kubernetes Scheduler
+After=network-online.target kube-apiserver.service
+
+[Service]
+ExecStart=/usr/local/bin/kube-scheduler \
+  --bind-address=127.0.0.1 \
+  --kubeconfig=/etc/kubernetes/kube-scheduler.kubeconfig \
+  --authentication-kubeconfig=/etc/kubernetes/kube-scheduler.kubeconfig \
+  --authorization-kubeconfig=/etc/kubernetes/kube-scheduler.kubeconfig \
+  --leader-elect=true
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

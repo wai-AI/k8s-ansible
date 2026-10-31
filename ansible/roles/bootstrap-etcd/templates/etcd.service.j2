@@ -1,0 +1,29 @@
+[Unit]
+Description=etcd
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/etcd \
+  --name={{ inventory_hostname }} \
+  --data-dir=/var/lib/etcd \
+  --listen-client-urls=https://127.0.0.1:2379,https://{{ private_ip }}:2379 \
+  --advertise-client-urls=https://{{ private_ip }}:2379 \
+  --listen-peer-urls=https://{{ private_ip }}:2380 \
+  --initial-advertise-peer-urls=https://{{ private_ip }}:2380 \
+  --initial-cluster={{ inventory_hostname }}=https://{{ private_ip }}:2380 \
+  --initial-cluster-token=week10-k8s \
+  --initial-cluster-state=new \
+  --cert-file=/etc/etcd/etcd-server.crt \
+  --key-file=/etc/etcd/etcd-server.key \
+  --trusted-ca-file=/etc/etcd/ca.crt \
+  --client-cert-auth=true \
+  --peer-cert-file=/etc/etcd/etcd-server.crt \
+  --peer-key-file=/etc/etcd/etcd-server.key \
+  --peer-trusted-ca-file=/etc/etcd/ca.crt \
+  --peer-client-cert-auth=true
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,40 @@
+---
+- name: Create local kubeconfig directory
+  ansible.builtin.file:
+    path: "{{ kubeconfig_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Generate kubeconfig files
+  ansible.builtin.template:
+    src: kubeconfig.j2
+    dest: "{{ kubeconfig_dir }}/{{ item.name }}.kubeconfig"
+    mode: "0600"
+  loop: "{{ kubeconfig_clients }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Generate persistent encryption key
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - rand
+      - -base64
+      - -out
+      - "{{ encryption_key_file }}"
+      - "32"
+    creates: "{{ encryption_key_file }}"
+  no_log: true
+
+- name: Restrict encryption key permissions
+  ansible.builtin.file:
+    path: "{{ encryption_key_file }}"
+    mode: "0600"
+
+- name: Generate encryption configuration
+  ansible.builtin.template:
+    src: encryption-config.j2
+    dest: "{{ encryption_config_file }}"
+    mode: "0600"
+  no_log: true

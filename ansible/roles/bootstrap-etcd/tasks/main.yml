@@ -1,0 +1,83 @@
+---
+- name: Create etcd directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /etc/etcd, mode: "0700"}
+    - {path: /var/lib/etcd, mode: "0700"}
+    - {path: /var/cache/kubernetes, mode: "0755"}
+
+- name: Download etcd
+  ansible.builtin.get_url:
+    url: "https://github.com/etcd-io/etcd/releases/download/v{{ etcd_version }}/etcd-v{{ etcd_version }}-linux-amd64.tar.gz"
+    dest: "/var/cache/kubernetes/etcd-v{{ etcd_version }}.tar.gz"
+    checksum: "sha256:{{ etcd_sha256 }}"
+    mode: "0644"
+
+- name: Extract etcd
+  ansible.builtin.unarchive:
+    src: "/var/cache/kubernetes/etcd-v{{ etcd_version }}.tar.gz"
+    dest: /var/cache/kubernetes
+    remote_src: true
+    creates: "/var/cache/kubernetes/etcd-v{{ etcd_version }}-linux-amd64/etcd"
+
+- name: Install etcd binaries
+  ansible.builtin.copy:
+    src: "/var/cache/kubernetes/etcd-v{{ etcd_version }}-linux-amd64/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    remote_src: true
+    mode: "0755"
+  loop:
+    - etcd
+    - etcdctl
+  notify: Restart etcd
+
+- name: Copy etcd certificates
+  ansible.builtin.copy:
+    src: "{{ pki_dir }}/{{ item }}"
+    dest: "/etc/etcd/{{ item }}"
+    mode: "0600"
+  loop:
+    - ca.crt
+    - etcd-server.crt
+    - etcd-server.key
+  no_log: true
+  notify: Restart etcd
+
+- name: Install etcd systemd unit
+  ansible.builtin.template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    mode: "0644"
+  notify: Restart etcd
+
+- name: Apply pending etcd changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start etcd
+  ansible.builtin.systemd_service:
+    name: etcd
+    enabled: true
+    state: started
+
+- name: Check etcd health
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/etcdctl
+      - --endpoints=https://127.0.0.1:2379
+      - --cacert=/etc/etcd/ca.crt
+      - --cert=/etc/etcd/etcd-server.crt
+      - --key=/etc/etcd/etcd-server.key
+      - endpoint
+      - health
+  register: etcd_health
+  changed_when: false
+  retries: 10
+  delay: 3
+  until: etcd_health.rc == 0
+
+- name: Show etcd health
+  ansible.builtin.debug:
+    msg: "{{ etcd_health.stdout }} {{ etcd_health.stderr }}"

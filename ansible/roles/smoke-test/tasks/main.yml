@@ -1,0 +1,106 @@
+---
+- name: Copy smoke test manifest
+  ansible.builtin.copy:
+    src: smoke-test.yaml
+    dest: /etc/kubernetes/smoke-test.yaml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Apply smoke test resources
+  ansible.builtin.command:
+    cmd: "{{ smoke_kubectl }} apply -f /etc/kubernetes/smoke-test.yaml"
+  register: smoke_apply
+  changed_when: >-
+    'created' in smoke_apply.stdout or
+    'configured' in smoke_apply.stdout
+
+- name: Wait for all nodes to become Ready
+  ansible.builtin.command:
+    cmd: "{{ smoke_kubectl }} wait --for=condition=Ready nodes --all --timeout=180s"
+  changed_when: false
+
+- name: Wait for server deployment
+  ansible.builtin.command:
+    cmd: >-
+      {{ smoke_kubectl }} -n smoke-test
+      rollout status deployment/smoke-server --timeout=180s
+  changed_when: false
+
+- name: Wait for client pod
+  ansible.builtin.command:
+    cmd: >-
+      {{ smoke_kubectl }} -n smoke-test
+      wait --for=condition=Ready pod/smoke-client --timeout=180s
+  changed_when: false
+
+- name: Check DNS using kubectl exec
+  ansible.builtin.command:
+    cmd: >-
+      {{ smoke_kubectl }} -n smoke-test exec smoke-client --
+      nslookup kubernetes.default.svc.cluster.local
+  register: smoke_dns
+  changed_when: false
+  until: smoke_dns.rc == 0
+  retries: 12
+  delay: 5
+
+- name: Check cross-node HTTP through Service
+  ansible.builtin.command:
+    cmd: >-
+      {{ smoke_kubectl }} -n smoke-test exec smoke-client --
+      wget -T 10 -qO-
+      http://smoke-server.smoke-test.svc.cluster.local
+  register: smoke_http
+  changed_when: false
+  until: >-
+    smoke_http.rc == 0 and
+    (smoke_http.stdout | trim) == 'smoke-ok'
+  retries: 12
+  delay: 5
+
+- name: Check container logs
+  ansible.builtin.command:
+    cmd: "{{ smoke_kubectl }} -n smoke-test logs deployment/smoke-server"
+  register: smoke_logs
+  changed_when: false
+  failed_when: >-
+    smoke_logs.rc != 0 or
+    'smoke-server-started' not in smoke_logs.stdout
+
+- name: Read test Secret through Kubernetes API
+  ansible.builtin.command:
+    cmd: >-
+      {{ smoke_kubectl }} -n smoke-test
+      get secret encryption-check -o jsonpath='{.data.value}'
+  register: smoke_secret
+  changed_when: false
+  no_log: true
+
+- name: Read test Secret directly from etcd
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/etcdctl
+      - --endpoints=https://127.0.0.1:2379
+      - --cacert=/etc/etcd/ca.crt
+      - --cert=/etc/etcd/etcd-server.crt
+      - --key=/etc/etcd/etcd-server.key
+      - --write-out=json
+      - get
+      - /registry/secrets/smoke-test/encryption-check
+  register: smoke_etcd
+  changed_when: false
+  no_log: true
+
+- name: Verify Secret value and encryption
+  vars:
+    etcd_records: "{{ (smoke_etcd.stdout | from_json).get('kvs', []) }}"
+  ansible.builtin.assert:
+    that:
+      - (smoke_secret.stdout | b64decode) == 'smoke-value'
+      - >-
+        (etcd_records | length == 1) and
+        (etcd_records[0].value |
+        b64decode(encoding='latin-1')).startswith('k8s:enc:secretbox:v1:key1:')
+    fail_msg: "Secret value or encryption verification failed"
+    success_msg: "Smoke tests passed: DNS, exec, logs, cross-node HTTP, Secrets encryption."

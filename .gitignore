@@ -1,0 +1,10 @@
+.terraform/
+*.tfstate*
+*.tfplan
+*.tfvars
+*.tfvars.json
+*.key
+*.pem
+*.kubeconfig
+.secrets/
+.DS_Store

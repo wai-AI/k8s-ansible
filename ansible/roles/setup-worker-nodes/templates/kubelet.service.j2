@@ -1,0 +1,16 @@
+[Unit]
+Description=Kubernetes Kubelet
+Wants=network-online.target containerd.service
+After=network-online.target containerd.service
+
+[Service]
+ExecStart=/usr/local/bin/kubelet \
+  --config=/etc/kubernetes/kubelet-config.yaml \
+  --kubeconfig=/etc/kubernetes/kubelet.kubeconfig \
+  --hostname-override={{ inventory_hostname }} \
+  --node-ip={{ private_ip }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

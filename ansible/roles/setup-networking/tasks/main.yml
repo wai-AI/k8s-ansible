@@ -1,0 +1,73 @@
+---
+- name: Download Flannel manifest
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/flannel-io/flannel/v{{ flannel_version }}/Documentation/kube-flannel.yml"
+    dest: /etc/kubernetes/kube-flannel.yaml
+    mode: "0644"
+    timeout: 60
+
+- name: Deploy Flannel
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/kubectl
+      - --kubeconfig=/etc/kubernetes/admin.kubeconfig
+      - apply
+      - -f
+      - /etc/kubernetes/kube-flannel.yaml
+  register: flannel_apply
+  changed_when: "'created' in flannel_apply.stdout or 'configured' in flannel_apply.stdout"
+
+- name: Wait for Flannel rollout
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/kubectl
+      - --kubeconfig=/etc/kubernetes/admin.kubeconfig
+      - -n
+      - kube-flannel
+      - rollout
+      - status
+      - daemonset/kube-flannel-ds
+      - --timeout=300s
+  changed_when: false
+
+- name: Wait for workers to become Ready
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/kubectl
+      - --kubeconfig=/etc/kubernetes/admin.kubeconfig
+      - wait
+      - --for=condition=Ready
+      - nodes
+      - --all
+      - --timeout=300s
+  changed_when: false
+
+- name: Render CoreDNS manifest
+  ansible.builtin.template:
+    src: coredns.yaml.j2
+    dest: /etc/kubernetes/coredns.yaml
+    mode: "0644"
+
+- name: Deploy CoreDNS
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/kubectl
+      - --kubeconfig=/etc/kubernetes/admin.kubeconfig
+      - apply
+      - -f
+      - /etc/kubernetes/coredns.yaml
+  register: coredns_apply
+  changed_when: "'created' in coredns_apply.stdout or 'configured' in coredns_apply.stdout"
+
+- name: Wait for CoreDNS readiness
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/kubectl
+      - --kubeconfig=/etc/kubernetes/admin.kubeconfig
+      - -n
+      - kube-system
+      - rollout
+      - status
+      - deployment/coredns
+      - --timeout=300s
+  changed_when: false

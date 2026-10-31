@@ -1,0 +1,207 @@
+---
+- name: Create package key and containerd directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /etc/apt/keyrings
+    - /etc/containerd
+
+- name: Download Docker repository signing key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+
+- name: Add containerd package repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: [https://download.docker.com/linux/ubuntu]
+    suites: [noble]
+    components: [stable]
+    architectures: [amd64]
+    signed_by: /etc/apt/keyrings/docker.asc
+    install_python_debian: true
+    state: present
+  register: containerd_repository
+
+- name: Remove legacy repository file
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/docker.list
+    state: absent
+  register: legacy_containerd_repository
+
+- name: Refresh package cache after repository changes
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 300
+  when: containerd_repository.changed or legacy_containerd_repository.changed
+
+- name: Install containerd
+  ansible.builtin.apt:
+    name: "containerd.io={{ containerd_package_version }}"
+    state: present
+    lock_timeout: 300
+  notify: Restart containerd
+
+- name: Configure containerd for Kubernetes
+  ansible.builtin.copy:
+    dest: /etc/containerd/config.toml
+    mode: "0644"
+    content: |
+      version = 3
+      disabled_plugins = []
+
+      [plugins."io.containerd.cri.v1.runtime".containerd]
+        default_runtime_name = "runc"
+
+      [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runc]
+        runtime_type = "io.containerd.runc.v2"
+
+      [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runc.options]
+        SystemdCgroup = true
+  notify: Restart containerd
+
+- name: Apply pending containerd changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start containerd
+  ansible.builtin.systemd_service:
+    name: containerd
+    enabled: true
+    state: started
+
+- name: Check containerd client and server
+  ansible.builtin.command: ctr version
+  register: containerd_version
+  changed_when: false
+  retries: 10
+  delay: 3
+  until: containerd_version.rc == 0
+
+- name: Show containerd version
+  ansible.builtin.debug:
+    var: containerd_version.stdout_lines
+
+- name: Create worker directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /etc/kubernetes, mode: "0700"}
+    - {path: /etc/kubernetes/pki, mode: "0700"}
+    - {path: /var/lib/kubelet, mode: "0755"}
+    - {path: /var/lib/kube-proxy, mode: "0755"}
+    - {path: /opt/cni/bin, mode: "0755"}
+    - {path: /etc/cni/net.d, mode: "0755"}
+    - {path: /var/cache/kubernetes, mode: "0755"}
+
+- name: Download CNI plugins
+  ansible.builtin.get_url:
+    url: "https://github.com/containernetworking/plugins/releases/download/v{{ cni_version }}/cni-plugins-linux-amd64-v{{ cni_version }}.tgz"
+    dest: "/var/cache/kubernetes/cni-plugins-linux-amd64-v{{ cni_version }}.tgz"
+    checksum: "sha256:https://github.com/containernetworking/plugins/releases/download/v{{ cni_version }}/cni-plugins-linux-amd64-v{{ cni_version }}.tgz.sha256"
+    mode: "0644"
+    timeout: 120
+
+- name: Extract CNI plugins
+  ansible.builtin.unarchive:
+    src: "/var/cache/kubernetes/cni-plugins-linux-amd64-v{{ cni_version }}.tgz"
+    dest: /opt/cni/bin
+    remote_src: true
+    creates: "/opt/cni/bin/.version-{{ cni_version }}"
+
+- name: Record installed CNI version
+  ansible.builtin.copy:
+    dest: "/opt/cni/bin/.version-{{ cni_version }}"
+    content: "{{ cni_version }}\n"
+    mode: "0644"
+
+- name: Download kubelet and kube-proxy
+  ansible.builtin.get_url:
+    url: "https://dl.k8s.io/release/v{{ kubernetes_version }}/bin/linux/amd64/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    checksum: "sha256:https://dl.k8s.io/release/v{{ kubernetes_version }}/bin/linux/amd64/{{ item }}.sha256"
+    mode: "0755"
+    timeout: 120
+  loop:
+    - kubelet
+    - kube-proxy
+  notify: Restart worker services
+
+- name: Copy worker certificates
+  ansible.builtin.copy:
+    src: "{{ pki_dir }}/{{ item }}"
+    dest: "/etc/kubernetes/pki/{{ item }}"
+    mode: "0600"
+  loop:
+    - ca.crt
+    - "{{ inventory_hostname }}.crt"
+    - "{{ inventory_hostname }}.key"
+  no_log: true
+  notify: Restart worker services
+
+- name: Copy worker kubeconfigs
+  ansible.builtin.copy:
+    src: "{{ kubeconfig_dir }}/{{ item.src }}"
+    dest: "/etc/kubernetes/{{ item.dest }}"
+    mode: "0600"
+  loop:
+    - src: "{{ inventory_hostname }}.kubeconfig"
+      dest: kubelet.kubeconfig
+    - src: kube-proxy.kubeconfig
+      dest: kube-proxy.kubeconfig
+  no_log: true
+  notify: Restart worker services
+
+- name: Install worker configuration files
+  ansible.builtin.template:
+    src: "{{ item }}-config.yaml.j2"
+    dest: "/etc/kubernetes/{{ item }}-config.yaml"
+    mode: "0600"
+  loop:
+    - kubelet
+    - kube-proxy
+  notify: Restart worker services
+
+- name: Install worker systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.service.j2"
+    dest: "/etc/systemd/system/{{ item }}.service"
+    mode: "0644"
+  loop:
+    - kubelet
+    - kube-proxy
+  notify: Restart worker services
+
+- name: Apply pending worker changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start worker services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - kubelet
+    - kube-proxy
+
+- name: Wait for worker registration
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/kubectl
+      - --kubeconfig=/etc/kubernetes/admin.kubeconfig
+      - get
+      - node
+      - "{{ item }}"
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  loop: "{{ groups['workers'] }}"
+  register: worker_registration
+  changed_when: false
+  retries: 20
+  delay: 3
+  until: worker_registration.rc == 0
