@@ -2,8 +2,6 @@
 
 This project builds a small Kubernetes cluster on three EC2 instances. Terraform creates the AWS infrastructure, and Ansible installs and configures the cluster components.
 
-The control plane runs as systemd services. Certificates, kubeconfigs, networking and DNS are configured explicitly as part of the assignment.
-
 ## Cluster layout
 
 AWS region: `eu-central-1`  
@@ -26,7 +24,7 @@ Kubernetes version: `1.36.5`
 
 Only the workers appear in `kubectl get nodes`. The controller runs the control plane services without a kubelet.
 
-There is one control plane and one etcd member. This is a temporary lab, so it does not provide high availability.
+There is one control plane and one etcd member.
 
 ## What Ansible does
 
@@ -159,36 +157,3 @@ http://localhost:8080
 ```
 
 The response should be `smoke-ok`. Press `Ctrl+C` to close the tunnel.
-
-## Issues encountered
-
-### SSH stopped working after an IP change
-
-The Security Group allowed access from the previous public IP. Updating `admin_cidr` restored access. This is now handled by `update-access.sh`.
-
-### Ansible used old EC2 addresses after recreating the infrastructure
-
-The inventory still contained public IPs from the previous instances. Generating it from Terraform outputs fixed this and removed the need to edit addresses manually.
-
-### Workers initially showed NotReady
-
-The workers registered before a Pod network was available. They became `Ready` after Flannel was deployed.
-
-### The short DNS test produced an attach warning
-
-The DNS lookup succeeded, but kubectl reported that it could not attach to the container. I repeated the query through a long-running Pod and checked both exec and logs successfully.
-
-### Repeating kubectl expose returned AlreadyExists
-
-The Service had already been created. The automated tests use `kubectl apply`, which reuses existing resources on later runs.
-
-## Remove the infrastructure
-
-Once the checks and documentation are finished, run this from the project root:
-
-```bash
-terraform -chdir=terraform destroy
-terraform -chdir=terraform state list
-```
-
-After destruction, verify in AWS that the lab instances and their root EBS volumes have been removed. The local Terraform and Ansible files remain available to recreate the cluster.
