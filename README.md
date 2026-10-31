@@ -1,109 +1,194 @@
-# Kubernetes на AWS через Terraform та Ansible
+# Kubernetes lab on AWS
 
-Навчальний Kubernetes-кластер, встановлений вручну без kubeadm.
+This project builds a small Kubernetes cluster on three EC2 instances. Terraform creates the AWS infrastructure, and Ansible installs and configures the cluster components.
 
-## Архітектура
+The control plane runs as systemd services. Certificates, kubeconfigs, networking and DNS are configured explicitly as part of the assignment.
 
-Регіон AWS: eu-central-1. ОС: Ubuntu 24.04.
-Kubernetes: v1.36.5.
+## Cluster layout
 
-| Вузол | Приватна IP | Призначення |
+AWS region: `eu-central-1`  
+Instance type: `t3.small`  
+Operating system: Ubuntu 24.04  
+Kubernetes version: `1.36.5`
+
+| Host | Private IP | Role |
 |---|---|---|
-| controller-0 | 10.20.1.10 | Control plane та etcd |
-| worker-0 | 10.20.1.20 | Worker |
-| worker-1 | 10.20.1.21 | Worker |
+| controller-0 | 10.20.1.10 | API server, controller manager, scheduler and etcd |
+| worker-0 | 10.20.1.20 | Worker node |
+| worker-1 | 10.20.1.21 | Worker node |
 
-Pod CIDR: 10.244.0.0/16.
-Service CIDR: 10.96.0.0/24.
-DNS: 10.96.0.10.
+- Pod network: `10.244.0.0/16`
+- Service network: `10.96.0.0/24`
+- Cluster DNS: `10.96.0.10`
+- Pod networking: Flannel
+- DNS: CoreDNS
+- Container runtime: containerd
 
-Це навчальна конфігурація з одним control plane та одним
-членом etcd, без високої доступності.
+Only the workers appear in `kubectl get nodes`. The controller runs the control plane services without a kubelet.
 
-## Етапи встановлення
+There is one control plane and one etcd member. This is a temporary lab, so it does not provide high availability.
 
-1. Terraform створює VPC, підмережу, Internet Gateway,
-   маршрути, Security Group, SSH key pair і три EC2.
-2. Перший play у site.yml налаштовує hostname, пакети,
-   синхронізацію часу, swap, модулі ядра та sysctl.
-3. generate-certs створює CA, TLS-сертифікати та ключі
-   підпису ServiceAccount.
-4. generate-configs створює kubeconfig-файли та конфігурацію
-   шифрування Secrets: secretbox із 32-байтовим ключем.
-5. bootstrap-etcd запускає etcd із TLS.
-6. setup-control-plane запускає API server, controller manager
-   і scheduler як systemd-сервіси.
-7. setup-worker-nodes встановлює containerd, CNI-плагіни,
-   kubelet і kube-proxy.
-8. configure-kubectl налаштовує віддалений доступ адміністратора.
-9. setup-networking розгортає Flannel і CoreDNS.
-10. smoke-test автоматично перевіряє працездатність кластера.
+## What Ansible does
 
-## Відтворення
+The first play in `site.yml` prepares all three hosts: it installs packages, sets hostnames, enables time synchronization, disables swap and configures the kernel networking settings.
 
-Потрібні AWS CLI з профілем aws-learning, Terraform, Ansible,
-kubectl, OpenSSL, колекція community.crypto та Python
-із cryptography для локальних криптографічних задач.
+The remaining work is split into roles:
 
-Для нового клону спочатку створити SSH-ключ:
+| Role | What it configures |
+|---|---|
+| `generate-certs` | CA, component TLS certificates and ServiceAccount signing keys |
+| `generate-configs` | Client kubeconfigs, a persistent 32-byte encryption key and the Secret encryption configuration |
+| `bootstrap-etcd` | A TLS-protected etcd member |
+| `setup-control-plane` | API server, controller manager, scheduler and kubelet access permissions |
+| `setup-worker-nodes` | containerd, CNI plugins, kubelet and kube-proxy |
+| `configure-kubectl` | Remote API access check and the local kubectl environment file |
+| `setup-networking` | Flannel and CoreDNS |
+| `smoke-test` | DNS, exec, logs, cross-node HTTP and Secret encryption checks |
+
+## Before running it
+
+The local machine needs:
+
+- AWS CLI with the `aws-learning` profile configured
+- Terraform
+- Ansible with the `community.crypto` collection
+- `cryptography` installed in the Python environment used by Ansible
+- kubectl and OpenSSL
+
+Check AWS access:
+
+```bash
+aws sts get-caller-identity \
+  --profile aws-learning \
+  --region eu-central-1
+```
+
+For a fresh checkout, create the SSH key used by Terraform and Ansible:
+
 ```bash
 mkdir -p .secrets
 chmod 700 .secrets
-ssh-keygen -t ed25519 -f .secrets/k8s-lab -N '' -C week10-k8s
+
+ssh-keygen -t ed25519 \
+  -f .secrets/k8s-lab \
+  -N '' \
+  -C week10-k8s
+
+ansible-galaxy collection install community.crypto
 ```
 
-Із кореня проєкту:
+The `.secrets` directory holds private keys, generated certificates, kubeconfigs and the encryption configuration. It is excluded from Git.
+
+## Create the cluster
+
+Run these commands from the project root:
+
 ```bash
 terraform -chdir=terraform init
 ./update-access.sh
+```
 
+Terraform creates the VPC, public subnet, Internet Gateway, routing, Security Group, SSH key pair and three EC2 instances.
+
+`update-access.sh` detects the current public IP of the local machine, updates `admin_cidr`, runs Terraform and writes the EC2 addresses into the Ansible inventory. Terraform asks for confirmation before applying changes.
+
+Then install Kubernetes:
+
+```bash
 cd ansible
+
 ansible k8s -b -m ping
 ansible-playbook site.yml --syntax-check
 ansible-playbook site.yml
+```
 
+Load the generated admin kubeconfig:
+
+```bash
 source ../.secrets/kubectl-env.sh
+
 kubectl get nodes -o wide
 kubectl get pods -A
 ```
 
-update-access.sh оновлює дозволену зовнішню IP адміністратора,
-застосовує Terraform і генерує актуальний Ansible inventory.
+In a new terminal, source the environment file again before using kubectl.
 
-## Перевірки
+## Check the cluster
+
+From the `ansible` directory:
 
 ```bash
 ansible-playbook site.yml --tags smoke-test
+```
+
+The role creates its resources in the `smoke-test` namespace. The client runs on `worker-0`, and the HTTP server runs on `worker-1`, so the HTTP request through the Service crosses the node boundary.
+
+The tests also execute commands inside a Pod, read container logs and resolve the Kubernetes Service through cluster DNS.
+
+For encryption, the role writes a test Secret, reads its value through the API and checks the raw etcd record for this prefix:
+
+```text
+k8s:enc:secretbox:v1:key1:
+```
+
+The final test rerun completed with `changed=0`, `unreachable=0` and `failed=0`.
+
+Useful commands for checking the current state:
+
+```bash
+kubectl get nodes -o wide
+kubectl get pods -A
+kubectl get --raw='/readyz?verbose'
 kubectl -n smoke-test get pods -o wide
 ```
 
-Підтверджено:
-- обидва worker-вузли мають статус Ready;
-- DNS повертає адресу Kubernetes Service;
-- працюють kubectl exec та отримання логів;
-- HTTP-запит через Service проходить між різними worker-вузлами;
-- Secret читається через API;
-- запис Secret у etcd має префікс k8s:enc:secretbox:v1:key1:;
-- повторний запуск smoke-test: changed=0, failed=0.
+Both workers should be `Ready`. Flannel, CoreDNS and the automated test Pods should be running.
 
-## Проблеми та рішення
+## Open the test application
 
-| Проблема | Рішення |
-|---|---|
-| Зміна IP адміністратора спричинила SSH timeout | Автоматичне оновлення admin_cidr через update-access.sh |
-| Після повторного створення EC2 inventory містив старі IP | Генерація inventory з Terraform outputs |
-| Worker-вузли були NotReady до встановлення мережі | Встановлення Flannel |
-| kubectl run не встиг підключитися до короткого DNS-тесту | Перевірка exec через довготривалий Pod |
-| Повторне створення Service повертало AlreadyExists | Використання kubectl apply в автоматизації |
+The test application uses an internal ClusterIP Service. To access it from the local browser:
 
-## Видалення
+```bash
+kubectl -n smoke-test port-forward service/smoke-server 8080:80
+```
 
-Із кореня проєкту:
+Keep that command running and open:
+
+```text
+http://localhost:8080
+```
+
+The response should be `smoke-ok`. Press `Ctrl+C` to close the tunnel.
+
+## Issues encountered
+
+### SSH stopped working after an IP change
+
+The Security Group allowed access from the previous public IP. Updating `admin_cidr` restored access. This is now handled by `update-access.sh`.
+
+### Ansible used old EC2 addresses after recreating the infrastructure
+
+The inventory still contained public IPs from the previous instances. Generating it from Terraform outputs fixed this and removed the need to edit addresses manually.
+
+### Workers initially showed NotReady
+
+The workers registered before a Pod network was available. They became `Ready` after Flannel was deployed.
+
+### The short DNS test produced an attach warning
+
+The DNS lookup succeeded, but kubectl reported that it could not attach to the container. I repeated the query through a long-running Pod and checked both exec and logs successfully.
+
+### Repeating kubectl expose returned AlreadyExists
+
+The Service had already been created. The automated tests use `kubectl apply`, which reuses existing resources on later runs.
+
+## Remove the infrastructure
+
+Once the checks and documentation are finished, run this from the project root:
+
 ```bash
 terraform -chdir=terraform destroy
 terraform -chdir=terraform state list
 ```
 
-Приватні ключі, kubeconfig-файли та конфігурація шифрування
-зберігаються в .secrets і виключені з Git.
-# k8s-ansible
+After destruction, verify in AWS that the lab instances and their root EBS volumes have been removed. The local Terraform and Ansible files remain available to recreate the cluster.
