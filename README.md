@@ -1,4 +1,4 @@
-# Kubernetes lab on AWS
+# Week 10: Kubernetes - the hard way
 
 This project builds a small Kubernetes cluster on three EC2 instances. Terraform creates the AWS infrastructure, and Ansible installs and configures the cluster components.
 
