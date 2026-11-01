@@ -275,12 +275,3 @@ After Prometheus started collecting data, Lens displayed CPU and memory usage, r
 
 ![CPU and memory charts in Lens after Prometheus was installed](docs/screenshots/lens-cluster-metrics.png)
 
-### Cleanup result
-
-After saving the results, I removed the lab infrastructure:
-
-```text
-Destroy complete! Resources: 10 destroyed.
-```
-
-The final AWS checks returned `[]` for non-terminated `week10-k8s-*` instances and `[]` for EBS volumes in `eu-central-1`. The cluster is no longer running; the screenshots above show its state before cleanup.
