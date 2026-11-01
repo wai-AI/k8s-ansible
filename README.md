@@ -195,17 +195,92 @@ After destruction, verify in AWS that the lab instances and their root EBS volum
 
 ## Lens and monitoring
 
-I installed Metrics Server v0.9.1 using metrics-server.yaml.
-Ansible configures the API aggregation certificates and API server flags.
+I connected Lens using the generated admin kubeconfig. Metrics Server `v0.9.1` is installed using [metrics-server.yaml](metrics-server.yaml), with the API aggregation certificates and API server flags managed by Ansible.
 
-Prometheus was installed through Lens using chart
-prometheus-community/prometheus version 29.39.0, with release name
-prometheus in the monitoring namespace. The overrides are in
-prometheus-values.yaml.
+Prometheus was installed through Lens using chart `prometheus-community/prometheus` version `29.39.0`. The release is named `prometheus` in the `monitoring` namespace, and its Helm overrides are in [prometheus-values.yaml](prometheus-values.yaml).
 
-Lens uses the Helm query format and service address
-monitoring/prometheus-server:80. Both kubectl top and the CPU/memory
-charts in Lens were checked successfully.
+Lens uses the `Helm` query format and service address `monitoring/prometheus-server:80`. Prometheus uses temporary storage, so recreating its Pod clears the collected history.
 
-Prometheus uses temporary storage, so recreating its Pod clears
-the collected history.
+The screenshots and terminal output below were captured while the lab was running. The node and `kubectl top` checks were recorded before Prometheus was installed; the monitoring Pod list and final Lens graphs were recorded afterwards.
+
+### Connecting Lens to the cluster
+
+After importing the admin kubeconfig, Lens showed the existing Flannel, CoreDNS and smoke-test Pods:
+
+![Initial cluster Pods in Lens, before monitoring was installed](docs/screenshots/lens-initial-pods.png)
+
+The node check confirmed that both workers were ready:
+
+```text
+kubectl get nodes -o wide
+
+NAME       STATUS   ROLES    AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION       CONTAINER-RUNTIME
+worker-0   Ready    <none>   99s   v1.36.5   10.20.1.20    <none>        Ubuntu 24.04.5 LTS   7.0.0-1014-aws       containerd://2.3.6
+worker-1   Ready    <none>   99s   v1.36.5   10.20.1.21    <none>        Ubuntu 24.04.5 LTS   7.0.0-1014-aws       containerd://2.3.6
+```
+
+### Installing Prometheus through Helm
+
+I selected the `monitoring` namespace and applied the overrides from `prometheus-values.yaml` in the Lens Helm editor:
+
+![Prometheus Helm version, namespace, release name and values in Lens](docs/screenshots/prometheus-helm-values.png)
+
+Lens then reported that installation had completed:
+
+![Prometheus installation completed in Lens](docs/screenshots/prometheus-installation-complete.png)
+
+### Checking the monitoring components
+
+All five monitoring Pods became ready, with no restarts. The readiness request also confirmed that Prometheus was reachable through the Kubernetes API proxy:
+
+```text
+kubectl -n monitoring get pods -o wide
+
+NAME                                              READY   STATUS    RESTARTS   AGE     IP            NODE       NOMINATED NODE   READINESS GATES
+prometheus-alertmanager-0                          2/2     Running   0          2m39s   10.244.1.4    worker-1   <none>           <none>
+prometheus-kube-state-metrics-86f6b846bf-8cpr9       1/1     Running   0          2m39s   10.244.0.4    worker-0   <none>           <none>
+prometheus-prometheus-node-exporter-drs9j           1/1     Running   0          2m39s   10.20.1.21    worker-1   <none>           <none>
+prometheus-prometheus-node-exporter-xvwrg           1/1     Running   0          2m39s   10.20.1.20    worker-0   <none>           <none>
+prometheus-server-7d8fb789c8-nfmlj                   2/2     Running   0          2m39s   10.20.1.20    worker-0   <none>           <none>
+
+kubectl get --raw='/api/v1/namespaces/monitoring/services/http:prometheus-server:80/proxy/-/ready'
+
+Prometheus Server is Ready.
+```
+
+### Checking CPU and memory metrics
+
+These readings confirmed that Metrics Server was serving node and Pod metrics before the Prometheus installation:
+
+```text
+kubectl top nodes
+
+NAME       CPU(cores)   CPU(%)   MEMORY(bytes)   MEMORY(%)
+worker-0   29m          1%       555Mi           30%
+worker-1   32m          1%       568Mi           31%
+
+kubectl top pods -A
+
+NAMESPACE      NAME                                      CPU(cores)   MEMORY(bytes)
+kube-flannel   kube-flannel-ds-62lgv                      7m           11Mi
+kube-flannel   kube-flannel-ds-qgzvv                      6m           11Mi
+kube-system    coredns-7cb688565b-d6b6x                   1m           11Mi
+kube-system    coredns-7cb688565b-n82d4                   1m           11Mi
+kube-system    metrics-server-64b95ddcc8-xgpx9            3m           19Mi
+smoke-test     smoke-client                              0m           0Mi
+smoke-test     smoke-server-7c8c699d67-hbgc6              1m           0Mi
+```
+
+After Prometheus started collecting data, Lens displayed CPU and memory usage, resource requests and limits, and the cluster's 12 Pods. The graph covers the period since Prometheus was installed:
+
+![CPU and memory charts in Lens after Prometheus was installed](docs/screenshots/lens-cluster-metrics.png)
+
+### Cleanup result
+
+After saving the results, I removed the lab infrastructure:
+
+```text
+Destroy complete! Resources: 10 destroyed.
+```
+
+The final AWS checks returned `[]` for non-terminated `week10-k8s-*` instances and `[]` for EBS volumes in `eu-central-1`. The cluster is no longer running; the screenshots above show its state before cleanup.
