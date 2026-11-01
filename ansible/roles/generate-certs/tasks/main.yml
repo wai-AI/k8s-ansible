@@ -96,3 +96,71 @@
     privatekey_path: "{{ pki_dir }}/service-account.key"
     format: PEM
     mode: "0644"
+
+- name: Generate front proxy CA private key
+  community.crypto.openssl_privatekey:
+    path: "{{ pki_dir }}/front-proxy-ca.key"
+    type: RSA
+    size: 4096
+    mode: "0600"
+
+- name: Generate front proxy CA request
+  community.crypto.openssl_csr:
+    path: "{{ pki_dir }}/front-proxy-ca.csr"
+    privatekey_path: "{{ pki_dir }}/front-proxy-ca.key"
+    common_name: front-proxy-ca
+    use_common_name_for_san: false
+    basic_constraints:
+      - "CA:TRUE"
+    basic_constraints_critical: true
+    key_usage:
+      - keyCertSign
+      - cRLSign
+    key_usage_critical: true
+    mode: "0600"
+
+- name: Generate front proxy CA certificate
+  community.crypto.x509_certificate:
+    path: "{{ pki_dir }}/front-proxy-ca.crt"
+    csr_path: "{{ pki_dir }}/front-proxy-ca.csr"
+    privatekey_path: "{{ pki_dir }}/front-proxy-ca.key"
+    provider: selfsigned
+    selfsigned_not_before: "-5m"
+    selfsigned_not_after: "+3650d"
+    ignore_timestamps: true
+    mode: "0600"
+
+- name: Generate front proxy client private key
+  community.crypto.openssl_privatekey:
+    path: "{{ pki_dir }}/front-proxy-client.key"
+    type: RSA
+    size: 2048
+    mode: "0600"
+
+- name: Generate front proxy client request
+  community.crypto.openssl_csr:
+    path: "{{ pki_dir }}/front-proxy-client.csr"
+    privatekey_path: "{{ pki_dir }}/front-proxy-client.key"
+    common_name: front-proxy-client
+    use_common_name_for_san: false
+    basic_constraints:
+      - "CA:FALSE"
+    basic_constraints_critical: true
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - clientAuth
+    mode: "0600"
+
+- name: Sign front proxy client certificate
+  community.crypto.x509_certificate:
+    path: "{{ pki_dir }}/front-proxy-client.crt"
+    csr_path: "{{ pki_dir }}/front-proxy-client.csr"
+    provider: ownca
+    ownca_path: "{{ pki_dir }}/front-proxy-ca.crt"
+    ownca_privatekey_path: "{{ pki_dir }}/front-proxy-ca.key"
+    ownca_not_before: "-5m"
+    ownca_not_after: "+365d"
+    ignore_timestamps: true
+    mode: "0600"

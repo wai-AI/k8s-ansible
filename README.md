@@ -192,3 +192,20 @@ terraform -chdir=terraform state list
 ```
 
 After destruction, verify in AWS that the lab instances and their root EBS volumes have been removed. The local Terraform and Ansible files remain available to recreate the cluster.
+
+## Lens and monitoring
+
+I installed Metrics Server v0.9.1 using metrics-server.yaml.
+Ansible configures the API aggregation certificates and API server flags.
+
+Prometheus was installed through Lens using chart
+prometheus-community/prometheus version 29.39.0, with release name
+prometheus in the monitoring namespace. The overrides are in
+prometheus-values.yaml.
+
+Lens uses the Helm query format and service address
+monitoring/prometheus-server:80. Both kubectl top and the CPU/memory
+charts in Lens were checked successfully.
+
+Prometheus uses temporary storage, so recreating its Pod clears
+the collected history.

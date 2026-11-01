@@ -1,0 +1,28 @@
+server:
+  hostNetwork: true
+  persistentVolume:
+    enabled: false
+  retention: "6h"
+  global:
+    scrape_interval: 30s
+    evaluation_interval: 30s
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 768Mi
+
+alertmanager:
+  enabled: true
+  persistence:
+    enabled: false
+
+kube-state-metrics:
+  enabled: true
+
+prometheus-node-exporter:
+  enabled: true
+
+prometheus-pushgateway:
+  enabled: false

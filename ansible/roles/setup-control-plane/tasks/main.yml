@@ -53,6 +53,20 @@
   no_log: true
   notify: Restart kube-apiserver
 
+- name: Copy aggregation certificates and key
+  ansible.builtin.copy:
+    src: "{{ pki_dir }}/{{ item }}"
+    dest: "/etc/kubernetes/pki/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - front-proxy-ca.crt
+    - front-proxy-client.crt
+    - front-proxy-client.key
+  no_log: true
+  notify: Restart kube-apiserver
+
 - name: Install API server systemd unit
   ansible.builtin.template:
     src: kube-apiserver.service.j2
